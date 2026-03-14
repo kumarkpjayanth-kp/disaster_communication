@@ -288,14 +288,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.5"
-  ggwave_flutter:
-    dependency: "direct main"
-    description:
-      name: ggwave_flutter
-      sha256: "05782c50bd68c8c4568c894a91974ee036ccefb28a636f6aebc41c70be19884f"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.0.2"
   glob:
     dependency: transitive
     description:

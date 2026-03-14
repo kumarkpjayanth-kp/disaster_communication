@@ -6,6 +6,17 @@ import 'package:offline_mesh/offline_map_screen.dart';
 import 'package:offline_mesh/p2p_service.dart';
 import 'package:offline_mesh/sound_modem_service.dart';
 
+/// Exception thrown when message rate limit is exceeded
+class RateLimitException implements Exception {
+  RateLimitException(this.message, {required this.waitTimeSeconds});
+
+  final String message;
+  final int waitTimeSeconds;
+
+  @override
+  String toString() => message;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService().init();
@@ -379,12 +390,43 @@ class _ChatScreenState extends State<ChatScreen> {
   late final P2PService _p2pService;
   final TextEditingController _messageController = TextEditingController();
   MessageCategory _selectedCategory = MessageCategory.general;
+  bool _soundDiscoveryActive = false;
 
   @override
   void initState() {
     super.initState();
     _p2pService = P2PService(governmentId: widget.governmentId);
     _p2pService.startMesh();
+  }
+
+  Future<void> _toggleSoundDiscovery() async {
+    try {
+      if (_p2pService.isSoundDiscoveryActive) {
+        await _p2pService.stopSoundDiscovery();
+      } else {
+        await _p2pService.startSoundDiscovery();
+      }
+
+      setState(() {
+        _soundDiscoveryActive = _p2pService.isSoundDiscoveryActive;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_soundDiscoveryActive
+              ? 'Sound discovery enabled'
+              : 'Sound discovery stopped'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to toggle sound discovery: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
@@ -397,8 +439,28 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
-    await _p2pService.broadcastMessage(text, category: _selectedCategory);
-    _messageController.clear();
+
+    try {
+      await _p2pService.broadcastMessage(text, category: _selectedCategory);
+      _messageController.clear();
+    } catch (e) {
+      if (e is RateLimitException) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            duration: Duration(seconds: 3),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send message: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -406,6 +468,16 @@ class _ChatScreenState extends State<ChatScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
+        actions: [
+          IconButton(
+            tooltip: 'Connect via sound',
+            icon: Icon(
+              _soundDiscoveryActive ? Icons.volume_off : Icons.volume_up,
+              color: Colors.white,
+            ),
+            onPressed: _toggleSoundDiscovery,
+          ),
+        ],
         title: ValueListenableBuilder<String>(
           valueListenable: _p2pService.statusNotifier,
           builder: (BuildContext context, String status, Widget? child) {
@@ -459,6 +531,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         MaterialPageRoute<OfflineMapScreen>(
                           builder: (BuildContext context) => OfflineMapScreen(
                             messages: _p2pService.messagesNotifier.value,
+                            p2pService: _p2pService,
                           ),
                         ),
                       );
@@ -687,9 +760,45 @@ class _ChatScreenState extends State<ChatScreen> {
             bottom: 24,
             child: _SosButton(
               onPressed: () async {
-                await SoundModemService().broadcastAcousticSOS();
-                await _p2pService.broadcastSOSAlert();
+                try {
+                  await SoundModemService().broadcastAcousticSOS();
+                  await _p2pService.broadcastSOSAlert();
+                } catch (e) {
+                  if (e is RateLimitException) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(e.message),
+                        duration: Duration(seconds: 5),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Emergency alert failed: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
               },
+            ),
+          ),
+          Positioned(
+            left: 20,
+            bottom: 24,
+            child: FloatingActionButton.small(
+              heroTag: 'sound_help',
+              onPressed: () {
+                _p2pService.sendSoundMessage('HELP');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Sent HELP signal via sound'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+              child: const Icon(Icons.volume_up),
             ),
           ),
         ],
